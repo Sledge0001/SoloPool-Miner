@@ -40,7 +40,7 @@ A high-performance Bitcoin solo mining application with GUI for [SoloPool.com](h
 
 ## Quick Start
 
-1. Download the latest release from [Releases](https://github.com/SoloPool-Org/solopool-miner/releases)
+1. Download the latest release from [Releases](https://github.com/Sledge0001/solopool-miner/releases)
 2. Run `SoloPoolMiner.exe`
 3. Enter your Bitcoin address and worker name (e.g., `bc1qYourAddress.WorkerName`)
 4. Adjust CPU/GPU power sliders as desired
