@@ -1,4 +1,4 @@
-# SoloPool Miner v1.0.1
+# SoloPool Miner v1.0.4
 
 A high-performance Bitcoin solo mining application with GUI for [SoloPool.com](https://solopool.com).
 
@@ -13,8 +13,18 @@ A high-performance Bitcoin solo mining application with GUI for [SoloPool.com](h
 - **Power Management** - Adjustable power sliders (10-100%) for CPU and GPU
 - **Red Zone Mode** - Push past 80% for maximum hashrate (with warnings)
 - **Real-time Graphs** - Live GPU/CPU utilization monitoring
+- **Address Persistence** - Saves your BTC address between sessions
 - **Log File** - All activity logged to `solopool_miner.log`
 - **Auto-connect** - Hardcoded to stratum.solopool.com:3333
+
+## Pool Fee
+
+**SoloPool.com charges a 2% fee only when you find a block.** There are no fees for mining or submitting shares - you only pay if you win!
+
+| Event | Fee |
+|-------|-----|
+| Mining/Shares | **FREE** |
+| Block Found | **2%** of block reward |
 
 ## Requirements
 
@@ -24,8 +34,8 @@ A high-performance Bitcoin solo mining application with GUI for [SoloPool.com](h
 - Or AMD/Intel GPU with OpenCL support
 
 ### For Building from Source
-- [NVIDIA CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit) (v11.0 or later)
-- Visual Studio 2019 or 2022 (for MSVC compiler)
+- [NVIDIA CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit) (v12.0 or later recommended)
+- Visual Studio 2019, 2022, or 2024 (for MSVC compiler)
 - OpenCL SDK (usually included with GPU drivers)
 
 ## Quick Start
@@ -38,27 +48,39 @@ A high-performance Bitcoin solo mining application with GUI for [SoloPool.com](h
 
 ## Building from Source
 
-### Windows (NVIDIA CUDA)
+### Windows (Multi-GPU Support)
+
+Build for all supported NVIDIA GPUs (RTX 2000/3000/4000/5000 series):
 
 ```batch
-nvcc -O3 -arch=sm_86 -allow-unsupported-compiler -Xlinker /SUBSYSTEM:WINDOWS ^
-     -o SoloPoolMiner.exe solopool_miner.cu ^
+nvcc -O3 ^
+     -gencode arch=compute_75,code=sm_75 ^
+     -gencode arch=compute_86,code=sm_86 ^
+     -gencode arch=compute_89,code=sm_89 ^
+     -gencode arch=compute_90,code=compute_90 ^
+     -allow-unsupported-compiler ^
+     -ccbin "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.xx.xxxxx\bin\Hostx64\x64" ^
+     -Xlinker /SUBSYSTEM:WINDOWS ^
+     -o SoloPoolMiner.exe solopool_miner_v1.0.4.cu ^
      -lws2_32 -lcomctl32 -lgdi32 -luser32 -lshell32 -lnvml -lOpenCL
 ```
 
-**Note:** Adjust `-arch=sm_XX` for your GPU architecture:
-- RTX 30xx series: `sm_86`
-- RTX 20xx series: `sm_75`
-- GTX 10xx series: `sm_61`
+**Note:** Adjust the `-ccbin` path to match your Visual Studio installation.
 
-### Build Options
+### GPU Architecture Support
 
-| Flag | Description |
-|------|-------------|
-| `-O3` | Maximum optimization |
-| `-arch=sm_XX` | Target GPU architecture |
-| `-allow-unsupported-compiler` | Allow newer MSVC versions |
-| `-Xlinker /SUBSYSTEM:WINDOWS` | No console window |
+| Architecture | GPUs | Support |
+|--------------|------|---------|
+| sm_75 | RTX 2000 series (Turing) | CUDA |
+| sm_86 | RTX 3000 series (Ampere) | CUDA |
+| sm_89 | RTX 4000 series (Ada) | CUDA |
+| compute_90 | RTX 5000+ series (Blackwell) | CUDA (PTX) |
+| GTX 900/1000 | Maxwell/Pascal | OpenCL fallback |
+| AMD GPUs | All with OpenCL | OpenCL |
+
+### Build Script
+
+Use the included `build_v1.0.4.bat` for easy compilation.
 
 ## Usage
 
@@ -75,20 +97,25 @@ When entering the Red Zone (>80%), you'll see a warning dialog. Your hardware wi
 ### Statistics Display
 
 ```
-CPU: 25.00 MH/s | GPU: 1200.00 MH/s | Total: 1225.00 MH/s
+CPU: 85.00 MH/s | GPU: 2200.00 MH/s | Total: 2285.00 MH/s
 CPU: 5/0 | GPU: 12/0 | Total: 17/0 (100.0%) | SPM: 8.5
-Best: 45000.0 (session) / 47000.0 (ever) | Uptime: 01:23:45 | Diff: 3
+Best: 45000.0 / 47000.0 | Uptime: 01:23:45 | Diff: 3 | Suggested: 3
 ```
 
 - **MH/s** - Megahashes per second
 - **X/Y** - Accepted/Rejected shares
 - **SPM** - Shares per minute
-- **Best** - Highest difficulty share found
+- **Best** - Highest difficulty share found (session / all-time)
 - **Diff** - Current pool difficulty
+- **Suggested** - Auto-adjusted difficulty for optimal SPM
 
-### Log File
+### Configuration Files
 
-All activity is logged to `solopool_miner.log` in the same directory as the executable. The log persists across sessions.
+| File | Purpose |
+|------|---------|
+| `solopool_miner.log` | Activity log (persists across sessions) |
+| `solopool_config.txt` | Saved BTC address and password |
+| `bestshare.txt` | All-time best share record |
 
 ## Architecture
 
@@ -117,14 +144,15 @@ All activity is logged to `solopool_miner.log` in the same directory as the exec
 **Why solo mine anyway?**
 - Educational/hobby purposes
 - Supporting network decentralization  
-- The dream of hitting a ~3.125 BTC block reward minus the 2% pool fee
-- No pool fees (if you win, you keep it all!)
+- The dream of hitting a ~3.125 BTC block reward
+- Low pool fee (2% only if you win!)
 
 ## Troubleshooting
 
 ### "No CUDA devices found"
 - Ensure NVIDIA drivers are up to date
-- Verify GPU supports CUDA (most GTX 600+ series)
+- Verify GPU supports CUDA (GTX 900+ series)
+- Older GPUs (GTX 1000 and below) will use OpenCL fallback
 
 ### "No GPU devices found"
 - For AMD: Install AMD Adrenalin drivers with OpenCL
@@ -139,6 +167,19 @@ All activity is logged to `solopool_miner.log` in the same directory as the exec
 - Check internet connection
 - Verify firewall allows outbound port 3333
 - Try restarting the miner
+
+## Changelog
+
+### v1.0.4
+- Added address persistence (saves between sessions)
+- Improved power scaling for 80-100% range
+- Fixed log not updating after stop/restart
+- Multi-GPU build support (RTX 2000-5000 series)
+- Batched log updates for better UI responsiveness
+- Gradual difficulty adjustments
+
+### v1.0.0
+- Initial release
 
 ## ⚠️ DISCLAIMER
 
