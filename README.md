@@ -1,4 +1,4 @@
-# SoloPool Miner v1.0.0
+# SoloPool Miner v1.0.1
 
 A high-performance Bitcoin solo mining application with GUI for [SoloPool.com](https://solopool.com).
 
