@@ -1,5 +1,5 @@
 /*******************************************************************************
- * SoloPool.Com Miner v1.0.0 - CUDA + OpenCL + CPU Hybrid WITH GUI
+ * SoloPool.Com Miner v1.0.1 - CUDA + OpenCL + CPU Hybrid WITH GUI
  * 
  * A Bitcoin solo mining application for SoloPool.com
  * Repository: https://github.com/SoloPool-Org/solopool-miner
@@ -14,6 +14,7 @@
  *   - CPU mining with SHA256-NI acceleration (Intel/AMD)
  *   - Power sliders (10-100%) with Red Zone warning (80%+)
  *   - Real-time GPU/CPU utilization graphs
+ *   - Variable Difficulty (Vardiff) auto-adjustment
  *   - Log file output (solopool_miner.log)
  *   - Hardcoded to stratum.solopool.com:3333
  * 
@@ -1150,7 +1151,7 @@ static void OpenLogFile(void) {
         if (g_logFile) {
             SYSTEMTIME st;
             GetLocalTime(&st);
-            fprintf(g_logFile, "\n========== SoloPool Miner v1.0.0 Started %04d-%02d-%02d %02d:%02d:%02d ==========\n",
+            fprintf(g_logFile, "\n========== SoloPool Miner v1.0.1 Started %04d-%02d-%02d %02d:%02d:%02d ==========\n",
                     st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
             fflush(g_logFile);
         }
@@ -1457,6 +1458,87 @@ static int stratum_send(stratum_ctx_t *ctx, const char *msg) {
         LogToGUI("TX: %s", msg);
     }
     return (send(ctx->sock, msg, (int)strlen(msg), 0) > 0) ? 0 : -1;
+}
+
+// -----------------------------------------------------------------------------
+// SECTION 13b: Variable Difficulty (Vardiff) - Auto-adjustment based on SPM
+// -----------------------------------------------------------------------------
+
+static int suggest_difficulty(stratum_ctx_t *ctx, int new_diff) {
+    if (new_diff < MIN_DIFF) new_diff = MIN_DIFF;
+    if (new_diff > MAX_DIFF) new_diff = MAX_DIFF;
+    
+    int current_pool_diff = (int)(ctx->difficulty + 0.5);
+    if (current_pool_diff < 1) current_pool_diff = 1;
+    
+    if (new_diff == current_pool_diff) {
+        return 0;
+    }
+    
+    char msg[256];
+    snprintf(msg, sizeof(msg), "{\"id\":99,\"method\":\"mining.suggest_difficulty\",\"params\":[%d]}\n", new_diff);
+    stratum_send(ctx, msg);
+    
+    g_miner.current_suggested_diff = new_diff;
+    LogToGUI(">>> Suggested new difficulty: %d (was pool diff: %d)", new_diff, current_pool_diff);
+    
+    return new_diff;
+}
+
+static void auto_adjust_difficulty(stratum_ctx_t *ctx, double spm) {
+    DWORD now = GetTickCount();
+    
+    if (g_miner.last_diff_adjust_time == 0) {
+        g_miner.last_diff_adjust_time = now;
+        g_miner.last_spm_react_time = now;
+        g_miner.accepted_at_last_adjust = g_miner.accepted;
+        return;
+    }
+    
+    DWORD elapsed_sec = (now - g_miner.start_time) / 1000;
+    if (elapsed_sec < SPM_REACT_DELAY) {
+        return;
+    }
+    
+    int current_suggested = g_miner.current_suggested_diff;
+    if (current_suggested < 1) current_suggested = 3;
+    
+    int new_diff = current_suggested;
+    int reason = 0;
+    
+    DWORD since_react = (now - g_miner.last_spm_react_time) / 1000;
+    if (since_react >= SPM_REACT_COOLDOWN) {
+        if (spm > SPM_HIGH_THRESHOLD) {
+            new_diff = current_suggested * 2;
+            if (new_diff > MAX_DIFF) new_diff = MAX_DIFF;
+            reason = 2;
+            g_miner.last_spm_react_time = now;
+        } else if (spm < SPM_LOW_THRESHOLD && spm > 0) {
+            new_diff = current_suggested / 2;
+            if (new_diff < MIN_DIFF) new_diff = MIN_DIFF;
+            reason = 3;
+            g_miner.last_spm_react_time = now;
+        }
+    }
+    
+    if (reason == 0) {
+        DWORD since_adjust = (now - g_miner.last_diff_adjust_time) / 1000;
+        if (since_adjust >= DIFF_ADJUST_INTERVAL) {
+            if (spm > TARGET_SPM + 3.0) {
+                new_diff = (int)(current_suggested * 1.25);
+                reason = 1;
+            } else if (spm < TARGET_SPM - 5.0 && spm > 0) {
+                new_diff = (int)(current_suggested * 0.75);
+                reason = 1;
+            }
+            g_miner.last_diff_adjust_time = now;
+            g_miner.accepted_at_last_adjust = g_miner.accepted;
+        }
+    }
+    
+    if (reason > 0 && new_diff != current_suggested) {
+        suggest_difficulty(ctx, new_diff);
+    }
 }
 
 static int stratum_recv_line(stratum_ctx_t *ctx, char *buf, size_t buflen) {
@@ -2178,7 +2260,7 @@ static void StartMining(void) {
     memset((void*)g_miner.shares_last_minute, 0, sizeof(g_miner.shares_last_minute));
     
     LogToGUI("================================================================================");
-    LogToGUI("SoloPool Miner v1.0.0 - GUI Edition");
+    LogToGUI("SoloPool Miner v1.0.1 - GUI Edition");
     LogToGUI("Pool: %s", POOL_DISPLAY);
     LogToGUI("Worker: %s", address);
     LogToGUI("CPU: %d threads @ %d%% power | GPU: %d device(s) @ %d%% power", 
@@ -2291,6 +2373,11 @@ static void UpdateGUIStats(void) {
     advance_spm_window();
     double spm = calculate_spm();
     
+    // Auto-adjust difficulty based on SPM (vardiff)
+    if (g_stratum.connected && g_stratum.authorized) {
+        auto_adjust_difficulty(&g_stratum, spm);
+    }
+    
     // Calculate uptime
     DWORD elapsed_ms = now - g_miner.start_time;
     int uptime_sec = elapsed_ms / 1000;
@@ -2307,13 +2394,13 @@ static void UpdateGUIStats(void) {
     snprintf(stats, sizeof(stats),
         "CPU: %.2f MH/s | GPU: %.2f MH/s | Total: %.2f MH/s\r\n"
         "CPU: %u/%u | GPU: %u/%u | Total: %u/%u (%.1f%%) | SPM: %.1f\r\n"
-        "Best: %.1f (session) / %.1f (ever) | Uptime: %02d:%02d:%02d | Diff: %.0f",
+        "Best: %.1f / %.1f | Uptime: %02d:%02d:%02d | Diff: %.0f | Suggested: %d",
         cpu_rate / 1e6, gpu_rate / 1e6, total_rate / 1e6,
         g_miner.cpu_accepted, g_miner.cpu_rejected,
         g_miner.gpu_accepted, g_miner.gpu_rejected,
         g_miner.accepted, g_miner.rejected, accept_rate, spm,
         g_miner.best_share_session, g_miner.best_share_ever,
-        hours, mins, secs, g_stratum.difficulty
+        hours, mins, secs, g_stratum.difficulty, g_miner.current_suggested_diff
     );
     
     SetWindowText(g_hwndStats, stats);
@@ -2342,7 +2429,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             int y = 15;
             
             // Title
-            HWND hTitle = CreateWindow("STATIC", "SoloPool.Com Miner v1.0.0",
+            HWND hTitle = CreateWindow("STATIC", "SoloPool.Com Miner v1.0.1",
                                        WS_CHILD | WS_VISIBLE | SS_CENTER,
                                        15, y, WINDOW_WIDTH - 50, 30, hwnd, NULL, hInst, NULL);
             SendMessage(hTitle, WM_SETFONT, (WPARAM)g_hFontBold, TRUE);
@@ -2727,7 +2814,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     g_hwnd = CreateWindowEx(
         0,
         "SoloPoolMinerGUIClass",
-        "SoloPool.Com Miner v1.0.0 - CUDA + CPU Hybrid",
+        "SoloPool.Com Miner v1.0.1 - CUDA + CPU Hybrid",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
         CW_USEDEFAULT, CW_USEDEFAULT,
         WINDOW_WIDTH, WINDOW_HEIGHT,
@@ -2743,7 +2830,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     UpdateWindow(g_hwnd);
     
     // Initial log message
-    LogToGUI("SoloPool Miner v1.0.0 GUI ready");
+    LogToGUI("SoloPool Miner v1.0.1 GUI ready");
     LogToGUI("CPU: %d cores | SHA: %s", g_nSystemCpuCount, g_has_sha_ni ? "SHA256-NI" : "Software");
     LogToGUI("GPU: %d CUDA device(s)", g_nGpuCount);
     if (g_miner.best_share_ever > 0) {
