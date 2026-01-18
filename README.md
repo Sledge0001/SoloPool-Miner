@@ -117,7 +117,7 @@ All activity is logged to `solopool_miner.log` in the same directory as the exec
 **Why solo mine anyway?**
 - Educational/hobby purposes
 - Supporting network decentralization  
-- The dream of hitting a ~3.125 BTC block reward
+- The dream of hitting a ~3.125 BTC block reward minus the 2% pool fee
 - No pool fees (if you win, you keep it all!)
 
 ## Troubleshooting
