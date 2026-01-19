@@ -165,8 +165,8 @@
 #define ID_TIMER_GRAPH      2002
 #define ID_TIMER_LOG        2003
 
-#define LOG_UPDATE_INTERVAL_MS  250
-#define LOG_BUFFER_SIZE         65536
+#define LOG_UPDATE_INTERVAL_MS  100
+#define LOG_BUFFER_SIZE         8192
 
 // =============================================================================
 // SECTION 3a: OpenCL Kernel Source (for AMD/Intel GPUs)
@@ -1219,7 +1219,7 @@ static void CloseLogFile(void) {
 
 // v1.0.4: Flush log buffer to GUI (call from UI thread only)
 static void FlushLogBuffer(void) {
-    if (g_logBufferLen == 0 || !g_hwndLog) return;
+    if (g_logBufferLen == 0 || !g_hwndLog || !IsWindow(g_hwndLog)) return;
     
     EnterCriticalSection(&g_csLogBuffer);
     if (g_logBufferLen > 0) {
@@ -1229,16 +1229,18 @@ static void FlushLogBuffer(void) {
         g_logBuffer[0] = '\0';
         LeaveCriticalSection(&g_csLogBuffer);
         
-        SendMessage(g_hwndLog, WM_SETREDRAW, FALSE, 0);
-        
+        // Get current text length
         int len = GetWindowTextLength(g_hwndLog);
-        if (len > 30000) {
+        
+        // v1.0.4: AGGRESSIVE trim - keep only last 30 lines (about 3000 chars)
+        // This prevents the Edit control from slowing down
+        if (len > 3000) {
             char *fullText = (char*)malloc(len + 2);
             if (fullText) {
                 GetWindowText(g_hwndLog, fullText, len + 1);
                 int lineCount = 0;
                 char *cutPoint = fullText + len;
-                while (cutPoint > fullText && lineCount < 150) {
+                while (cutPoint > fullText && lineCount < 30) {
                     cutPoint--;
                     if (*cutPoint == '\n') lineCount++;
                 }
@@ -1249,14 +1251,14 @@ static void FlushLogBuffer(void) {
             }
         }
         
+        // Append new text
         SendMessage(g_hwndLog, EM_SETSEL, len, len);
         SendMessage(g_hwndLog, EM_REPLACESEL, FALSE, (LPARAM)localBuf);
         
-        SendMessage(g_hwndLog, WM_SETREDRAW, TRUE, 0);
+        // Scroll to bottom
         len = GetWindowTextLength(g_hwndLog);
         SendMessage(g_hwndLog, EM_SETSEL, len, len);
         SendMessage(g_hwndLog, EM_SCROLLCARET, 0, 0);
-        InvalidateRect(g_hwndLog, NULL, FALSE);
     } else {
         LeaveCriticalSection(&g_csLogBuffer);
     }
@@ -1275,23 +1277,32 @@ static void LogToGUI(const char *fmt, ...) {
     va_end(args);
     strcat(buf, "\r\n");
     
-    // Buffer for batched GUI update
+    // Buffer for batched GUI update - simple overwrite if full
     EnterCriticalSection(&g_csLogBuffer);
     int msg_len = (int)strlen(buf);
-    if (g_logBufferLen + msg_len < LOG_BUFFER_SIZE - 1) {
-        strcpy(g_logBuffer + g_logBufferLen, buf);
-        g_logBufferLen += msg_len;
+    if (g_logBufferLen + msg_len >= LOG_BUFFER_SIZE - 1) {
+        // Buffer full - clear it (timer will catch up)
+        g_logBufferLen = 0;
+        g_logBuffer[0] = '\0';
     }
+    strcpy(g_logBuffer + g_logBufferLen, buf);
+    g_logBufferLen += msg_len;
     LeaveCriticalSection(&g_csLogBuffer);
     
-    // Write to log file immediately
+    // Write to log file immediately (with error recovery)
     if (g_logFile) {
         char fileBuf[2048];
         strcpy(fileBuf, buf);
         char *p = strstr(fileBuf, "\r\n");
         if (p) { *p = '\n'; *(p+1) = '\0'; }
-        fprintf(g_logFile, "%s", fileBuf);
-        fflush(g_logFile);
+        if (fprintf(g_logFile, "%s", fileBuf) < 0 || fflush(g_logFile) != 0) {
+            // File error - try to reopen
+            fclose(g_logFile);
+            g_logFile = fopen(LOG_FILE_NAME, "a");
+        }
+    } else {
+        // Try to open if not open
+        g_logFile = fopen(LOG_FILE_NAME, "a");
     }
 }
 
