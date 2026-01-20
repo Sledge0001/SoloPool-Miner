@@ -96,7 +96,7 @@
 #define CONFIG_FILE "solopool_config.txt"
 #define TARGET_SPM 18.0
 #define SPM_HIGH_THRESHOLD 25.0
-#define SPM_LOW_THRESHOLD 7.0
+#define SPM_LOW_THRESHOLD 5.0
 #define SPM_REACT_DELAY 60
 #define SPM_REACT_COOLDOWN 30
 #define DIFF_ADJUST_INTERVAL 300
@@ -1629,7 +1629,7 @@ static void auto_adjust_difficulty(stratum_ctx_t *ctx, double spm) {
             if (spm > TARGET_SPM + 3.0) {
                 new_diff = (int)(current_suggested * 1.25);
                 reason = 1;
-            } else if (spm < TARGET_SPM - 5.0 && spm > 0) {
+            } else if (spm < TARGET_SPM - 11.0 && spm > 0) {
                 new_diff = (int)(current_suggested * 0.75);
                 reason = 1;
             }
